@@ -24,6 +24,7 @@ const fileName = document.getElementById('fileName');
 const dropZone = document.getElementById('dropZone');
 const autoConvert = document.getElementById('autoConvert');
 const generateClasses = document.getElementById('generateClasses');
+const generateLogs = document.getElementById('generateLogs');
 const languageButtons = document.querySelectorAll('.lang-btn');
 const convertBtn = document.getElementById('convertBtn');
 const statusDiv = document.getElementById('status');
@@ -93,7 +94,8 @@ async function performConversion() {
 
         // Call WebAssembly function
         const options = {
-            generateClasses: generateClasses.checked
+            generateClasses: generateClasses.checked,
+            generateLogs: generateLogs.checked
         };
         const result = window.convertManifest(manifestContent, selectedLanguage, options);
 
@@ -437,9 +439,22 @@ function loadGenerateClassesPreference() {
     }
 }
 
+// Load generate-logs preference from localStorage
+function loadGenerateLogsPreference() {
+    const savedPreference = localStorage.getItem('generateLogs');
+    if (savedPreference !== null) {
+        generateLogs.checked = savedPreference === 'true';
+    }
+}
+
 // Save generate-classes preference to localStorage
 function saveGenerateClassesPreference() {
     localStorage.setItem('generateClasses', generateClasses.checked);
+}
+
+// Save generate-logs preference to localStorage
+function saveGenerateLogsPreference() {
+    localStorage.setItem('generateLogs', generateLogs.checked);
 }
 
 // Auto-convert toggle change handler
@@ -457,8 +472,19 @@ generateClasses.addEventListener('change', () => {
     }
 });
 
+// Generate logs toggle change handler
+generateLogs.addEventListener('change', () => {
+    saveGenerateLogsPreference();
+
+    // Always regenerate if manifest is loaded and files have been generated
+    if (manifestContent && wasmReady && Object.keys(generatedFiles).length > 0) {
+        setTimeout(() => performConversion(), 100);
+    }
+});
+
 // Initialize
 initializeDefaultLanguage();
 loadAutoConvertPreference();
 loadGenerateClassesPreference();
+loadGenerateLogsPreference();
 loadWasm();

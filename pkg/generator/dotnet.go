@@ -192,19 +192,10 @@ func (g *DotnetGenerator) generateAlias(alias *manifest.Alias, underlyingType st
 	}
 
 	switch underlyingType {
-	case "Bool8":
-	case "Char8":
-	case "Bool8[]":
-	case "Char8[]":
+	case "Bool8", "Char8", "Char16", "Bool8[]", "Char8[]", "Char16[]":
 		underlyingType = fmt.Sprintf("Plugify.%s", underlyingType)
-	case "Vector2":
-	case "Vector3":
-	case "Vector4":
-	case "Matrix4x4":
-	case "Vector2[]":
-	case "Vector3[]":
-	case "Vector4[]":
-	case "Matrix4x4[]":
+	case "Vector2", "Vector3", "Vector4", "Matrix4x4",
+		"Vector2[]", "Vector3[]", "Vector4[]", "Matrix4x4[]":
 		underlyingType = fmt.Sprintf("System.Numerics.%s", underlyingType)
 	}
 
@@ -255,7 +246,7 @@ func (g *DotnetGenerator) formatDelegateParameters(params []manifest.ParamType) 
 	})
 }
 
-func (g *DotnetGenerator) generateMethod(method *manifest.Method) (string, error) {
+func (g *DotnetGenerator) generateMethod(method *manifest.Method, pluginName string, generateLogs bool) (string, error) {
 	var sb strings.Builder
 
 	// XML documentation
@@ -263,13 +254,6 @@ func (g *DotnetGenerator) generateMethod(method *manifest.Method) (string, error
 	if summary == "" {
 		summary = method.Name
 	}
-
-	sb.WriteString(g.generateDocumentation(DocOptions{
-		Indent:  "\t\t",
-		Summary: summary,
-		Params:  method.ParamTypes,
-		RetType: method.RetType,
-	}))
 
 	// Generate function pointer declarations
 	managedTypes, err := g.formatManagedTypes(method)
@@ -284,8 +268,10 @@ func (g *DotnetGenerator) generateMethod(method *manifest.Method) (string, error
 
 	methodName := method.Name
 
+	sb.WriteString(fmt.Sprintf("#region %s\n", methodName))
+
 	// Managed delegate pointer
-	sb.WriteString(fmt.Sprintf("\t\tinternal static delegate*<%s> %s = &___%s;\n", managedTypes, methodName, methodName))
+	sb.WriteString(fmt.Sprintf("\t\tinternal static delegate*<%s> _%s = &___%s;\n", managedTypes, methodName, methodName))
 
 	// Unmanaged function pointer
 	sb.WriteString(fmt.Sprintf("\t\tinternal static delegate* unmanaged[Cdecl]<%s> __%s;\n", unmanagedTypes, methodName))
@@ -310,6 +296,43 @@ func (g *DotnetGenerator) generateMethod(method *manifest.Method) (string, error
 		return "", err
 	}
 	sb.WriteString(body)
+
+	sb.WriteString("\t\t}\n")
+
+	sb.WriteString(fmt.Sprintf("#endregion %s\n", methodName))
+
+	sb.WriteString(g.generateDocumentation(DocOptions{
+		Indent:  "\t\t",
+		Summary: summary,
+		Params:  method.ParamTypes,
+		RetType: method.RetType,
+	}))
+
+	if generateLogs {
+		if len(params) > 0 {
+			params += ", "
+		}
+		params += "[CallerMemberName] string callerFunction = \"\", [CallerFilePath] string callerFile = \"\", [CallerLineNumber] int callerLine = 0"
+	}
+
+	sb.WriteString(fmt.Sprintf("\t\tinternal static %s %s(%s)\n", retType, methodName, params))
+	sb.WriteString("\t\t{\n")
+
+	// Generate exported wrapper function
+	paramNames, err := g.formatCallParameters(method.ParamTypes)
+	if err != nil {
+		return "", err
+	}
+
+	if generateLogs {
+		sb.WriteString(fmt.Sprintf("\t\t\tNativeMethods.Log(\"%s::%s\", Severity.Trace, callerLine, callerFile, callerFunction, callerModule);\n", pluginName, methodName))
+	}
+
+	if method.RetType.Type != "void" {
+		sb.WriteString(fmt.Sprintf("\t\t\treturn _%s(%s);\n", methodName, paramNames))
+	} else {
+		sb.WriteString(fmt.Sprintf("\t\t\t_%s(%s);\n", methodName, paramNames))
+	}
 
 	sb.WriteString("\t\t}\n")
 
@@ -367,6 +390,17 @@ func (g *DotnetGenerator) formatMethodParameters(params []manifest.ParamType) (s
 		if param.Default != nil {
 			result += fmt.Sprintf(" = %d", *param.Default)
 		}
+		return result, nil
+	})
+}
+
+func (g *DotnetGenerator) formatCallParameters(params []manifest.ParamType) (string, error) {
+	return g.formatParameters(params, func(_ int, param *manifest.ParamType) (string, error) {
+		var result string
+		if param.Ref && param.Type != "void" {
+			result = "ref "
+		}
+		result += param.Name
 		return result, nil
 	})
 }
@@ -658,7 +692,9 @@ func (g *DotnetGenerator) generateUnmarshaling(method *manifest.Method, indent s
 
 			if strings.Contains(converter, "VectorData") {
 				sizeFunc := g.typeMapper.getSizeFunction(method.RetType.Type)
-				retTypeName, _ := g.typeMapper.MapReturnType(&method.RetType)
+				retType := method.RetType
+				retType.Alias = nil
+				retTypeName, _ := g.typeMapper.MapReturnType(&retType)
 				// Remove [] suffix for array initialization
 				baseType := strings.TrimSuffix(retTypeName, "[]")
 				sb.WriteString(fmt.Sprintf("%s__retVal = new %s[%s(&__retVal_native)];\n", indent, baseType, sizeFunc))
@@ -1195,7 +1231,8 @@ func (g *DotnetGenerator) generateEnumsFile(m *manifest.Manifest) (string, error
 	var sb strings.Builder
 
 	// Using statements
-	sb.WriteString("using System;\n\n")
+	sb.WriteString("using System;\n")
+	sb.WriteString("using System.Reflection;\n\n")
 	sb.WriteString(fmt.Sprintf("// Generated from %s.pplugin\n\n", m.Name))
 
 	// Namespace
@@ -1217,6 +1254,12 @@ func (g *DotnetGenerator) generateEnumsFile(m *manifest.Manifest) (string, error
 	sb.WriteString(fmt.Sprintf("\t/// %s type for RAII wrappers\n", OwnershipEnumName))
 	sb.WriteString("\t/// </summary>\n")
 	sb.WriteString(fmt.Sprintf("\tinternal enum %s { Borrowed, Owned }\n\n", OwnershipEnumName))
+
+	sb.WriteString(fmt.Sprintf("\tinternal static unsafe partial class %s {\n", m.Name))
+
+	sb.WriteString("\t\tprivate static readonly string callerModule = Assembly.GetExecutingAssembly().GetName().Name!;\n")
+
+	sb.WriteString("\t}\n\n")
 
 	sb.WriteString("#pragma warning restore CS0649\n")
 	sb.WriteString("}\n")
@@ -1296,7 +1339,7 @@ func (g *DotnetGenerator) generateGroupFile(m *manifest.Manifest, groupName stri
 	for _, method := range m.Methods {
 		methodGroup := method.Group
 		if methodGroup == groupName {
-			methodCode, err := g.generateMethod(&method)
+			methodCode, err := g.generateMethod(&method, m.Name, opts.GenerateLogs)
 			if err != nil {
 				return "", fmt.Errorf("failed to generate method %s: %w", method.Name, err)
 			}

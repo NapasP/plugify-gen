@@ -257,7 +257,7 @@ func (g *RustGenerator) formatRustParams(params []manifest.ParamType, includeNam
 	})
 }
 
-func (g *RustGenerator) generateMethod(pluginName string, method *manifest.Method) (string, error) {
+func (g *RustGenerator) generateMethod(method *manifest.Method, pluginName string) (string, error) {
 	var sb strings.Builder
 
 	sb.WriteString(g.generateDocumentation(DocOptions{
@@ -294,6 +294,7 @@ func (g *RustGenerator) generateMethod(pluginName string, method *manifest.Metho
 	}
 
 	// Generate wrapper function
+	sb.WriteString(fmt.Sprintf("#[track_caller]\n"))
 	sb.WriteString(fmt.Sprintf("#[allow(dead_code, non_snake_case)]\n"))
 	sb.WriteString(fmt.Sprintf("pub fn %s(%s)", method.Name, paramTypes))
 	if retType != "" && retType != "()" {
@@ -301,6 +302,9 @@ func (g *RustGenerator) generateMethod(pluginName string, method *manifest.Metho
 		sb.WriteString(retType)
 	}
 	sb.WriteString(" {\n")
+
+	sb.WriteString(fmt.Sprintf("    trace!(\"%s::%s\");\n", pluginName, method.Name))
+
 	sb.WriteString("    unsafe { ")
 	sb.WriteString(fmt.Sprintf("__%s_%s", pluginName, method.Name))
 	sb.WriteString(".expect(\"")
@@ -418,13 +422,13 @@ func (g *RustGenerator) generateGroupFile(m *manifest.Manifest, groupName string
 	sb.WriteString("#[allow(unused_imports)]\n")
 	sb.WriteString("use super::delegates::*;\n")
 	sb.WriteString("#[allow(unused_imports)]\n")
-	sb.WriteString("use plugify::{get_method_ptr, Str, Arr, Var, Vec2, Vec3, Vec4, Mat4x4};\n\n")
+	sb.WriteString("use plugify::{trace, Str, Arr, Var, Vec2, Vec3, Vec4, Mat4x4};\n\n")
 
 	// Generate methods for this group
 	for _, method := range m.Methods {
 		methodGroup := method.Group
 		if methodGroup == groupName {
-			methodCode, err := g.generateMethod(m.Name, &method)
+			methodCode, err := g.generateMethod(&method, m.Name)
 			if err != nil {
 				return "", fmt.Errorf("failed to generate method %s: %w", method.Name, err)
 			}

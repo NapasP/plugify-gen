@@ -346,7 +346,7 @@ func (g *CppGenerator) generateDelegate(proto *manifest.Prototype) (string, erro
 	return sb.String(), nil
 }
 
-func (g *CppGenerator) generateMethod(pluginName string, method *manifest.Method) (string, error) {
+func (g *CppGenerator) generateMethod(method *manifest.Method, pluginName string, generateLogs bool) (string, error) {
 	var sb strings.Builder
 
 	formattedParams, err := FormatParameters(method.ParamTypes, ParamFormatTypesAndNames, g.typeMapper)
@@ -386,7 +386,19 @@ func (g *CppGenerator) generateMethod(pluginName string, method *manifest.Method
 		Indent:      "  ",
 	}))
 
+	if generateLogs {
+		if len(formattedParams) > 0 {
+			formattedParams += ", "
+		}
+		formattedParams += "plg::source_location __location = plg::source_location::current()"
+	}
+
 	sb.WriteString(fmt.Sprintf("  inline %s %s(%s) {\n", retType, method.Name, formattedParams))
+
+	if generateLogs {
+		sb.WriteString(fmt.Sprintf("    plg::Log(\"%s::%s\", plg::Severity::Trace, __location);\n", pluginName, method.Name))
+	}
+
 	if method.RetType.Type == "void" {
 		sb.WriteString(fmt.Sprintf("    return __%s_%s(%s);\n", pluginName, method.Name, paramNames))
 	} else {
@@ -820,7 +832,7 @@ func (g *CppGenerator) generateGroupFile(m *manifest.Manifest, groupName string,
 	for _, method := range m.Methods {
 		methodGroup := method.Group
 		if methodGroup == groupName {
-			methodCode, err := g.generateMethod(m.Name, &method)
+			methodCode, err := g.generateMethod(&method, m.Name, opts.GenerateLogs)
 			if err != nil {
 				return "", fmt.Errorf("failed to generate method %s: %w", method.Name, err)
 			}

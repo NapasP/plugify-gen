@@ -278,7 +278,7 @@ func (g *GolangGenerator) generateDelegate(proto *manifest.Prototype) (string, e
 }
 
 // generateMethod generates a single method implementation
-func (g *GolangGenerator) generateMethod(method *manifest.Method) (string, error) {
+func (g *GolangGenerator) generateMethod(method *manifest.Method, pluginName string, generateLogs bool) (string, error) {
 	var sb strings.Builder
 
 	// Generate documentation
@@ -309,6 +309,10 @@ func (g *GolangGenerator) generateMethod(method *manifest.Method) (string, error
 		sb.WriteString(fmt.Sprintf(" %s", returnType))
 	}
 	sb.WriteString(" {\n")
+
+	if generateLogs {
+		sb.WriteString(fmt.Sprintf("\tplugify.Log(\"%s::%s\", plugify.Trace, 2)\n", pluginName, method.Name))
+	}
 
 	// Generate method body
 	body, err := g.generateMethodBody(method)
@@ -1426,6 +1430,8 @@ func (g *GolangGenerator) generateAliasesGoFile(m *manifest.Manifest) (string, e
 
 	sb.WriteString("import \"github.com/untrustedmodders/go-plugify\"\n\n")
 
+	sb.WriteString("var _ = plugify.Plugin.Loaded\n\n")
+
 	// Add comment header
 	sb.WriteString(fmt.Sprintf("// Generated from %s\n\n", m.Name))
 
@@ -1564,7 +1570,7 @@ func (g *GolangGenerator) generateGroupGoFile(m *manifest.Manifest, groupName st
 	for _, method := range m.Methods {
 		methodGroup := method.Group
 		if methodGroup == groupName {
-			methodCode, err := g.generateMethod(&method)
+			methodCode, err := g.generateMethod(&method, m.Name, opts.GenerateLogs)
 			if err != nil {
 				return "", fmt.Errorf("failed to generate method %s: %w", method.Name, err)
 			}
